@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+      "module": "ES6",
+      "target": "ES6",
+      "outDir": "../Bitburner_scripts/home",
+      "noImplicitAny": true,
+      "removeComments": true,
+      "preserveConstEnums": true,
+      "sourceMap": false
+    },
+
+    "include": ["src/*"],
+    "exclude": ["index.d.ts"]
+  }
