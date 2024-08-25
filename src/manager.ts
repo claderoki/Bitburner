@@ -1,5 +1,5 @@
 import type {NS, Server} from '../index';
-import { ServerTraverser, hashCode, isHackable } from './helper';
+import { ServerTraverser, calculateProfitPerMs, hashCode, isHackable, maxPossibleThreads } from './helper';
 
 function minutes(minutes: number) {
     return minutes * 60000;
@@ -7,10 +7,10 @@ function minutes(minutes: number) {
 
 export async function main(ns: NS) {
     let manager = new ControllerManager(ns);
-    while (true) {
-        manager.poll();
-        await ns.sleep(minutes(30));
-    }
+    manager.poll();
+    // while (true) {
+    // await ns.sleep(minutes(30));
+    // }
 }
 
 class ControllerManager {
@@ -24,9 +24,12 @@ class ControllerManager {
 
     poll() {
         let level = this.ns.getHackingLevel();
+        let ns = this.ns;
         let hackableServers = new ServerTraverser(this.ns)
             .traverse((s) => isHackable(this.ns, s, level))
-            .sort(function(a,b){return b.moneyAvailable-a.moneyAvailable});
+            .sort(function(a,b) {
+                return calculateProfitPerMs(ns, a)-calculateProfitPerMs(ns, b);
+            });
 
         for (let server of this.distributor.distribute(this.ns)) {
             if (hackableServers.length === 0) {
@@ -34,13 +37,18 @@ class ControllerManager {
                 break;
             }
             
+            let threads = 1;
+            if (true) {
+                threads = maxPossibleThreads(this.ns, this.distributor.CONTROLLER_FILE, server.hostname);
+            }
+
             this.ns.killall(server.hostname);
             let serverToHack = hackableServers.pop();
             this.ns.tprint('Running controller on ' + server.hostname + " (hacking " + serverToHack.hostname + ")");
-            this.ns.exec(this.distributor.CONTROLLER_FILE, server.hostname, 1, serverToHack.hostname);
+            this.ns.exec(this.distributor.CONTROLLER_FILE, server.hostname, threads, serverToHack.hostname);
         }
-        if (hackableServers.length === 0) {
-            this.ns.tprint('Done distributing, servers still remaining: ' + hackableServers.join(','));
+        if (hackableServers.length > 0) {
+            this.ns.tprint('Done distributing, servers still remaining: ' + hackableServers.map((s) => s.hostname).join(','));
         }
 
     }
@@ -48,9 +56,12 @@ class ControllerManager {
 
 class ControllerDistributor {
     FILES_TO_INJECT = [
-        "controller.js", "hack.js",
-        "crack.js", "grow.js",
-        "helper.js", "weaken.js",
+        "controller.js",
+        // "hack.js",
+        // "crack.js",
+        // "grow.js",
+        // "helper.js",
+        // "weaken.js",
     ];
     CONTROLLER_FILE = this.FILES_TO_INJECT[0];
     
@@ -91,6 +102,11 @@ class ControllerDistributor {
     }
     
     distributeTo(ns: NS, server: Server, hash: string) {
+        // never delete or mess with files on home.
+        if (server.hostname === 'home') {
+            return;
+        }
+
         let serverHash = this.getHash(ns, server);
         if (serverHash !== hash) {
             for (let file of this.FILES_TO_INJECT) {
