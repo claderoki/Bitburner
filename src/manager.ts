@@ -13,15 +13,6 @@ export async function main(ns: NS) {
     }
 }
 
-function findBestServerToHack(ns: NS): Server {
-    let level = ns.getHackingLevel();
-
-    let servers = new ServerTraverser(ns)
-        .traverse((s) => isHackable(ns, s, level))
-        .sort(function(a,b){return b.moneyAvailable-a.moneyAvailable});
-    return servers[0]
-}
-
 class ControllerManager {
     distributor: ControllerDistributor;
     ns: NS;
@@ -32,12 +23,26 @@ class ControllerManager {
     }
 
     poll() {
-        let bestServerToHack = findBestServerToHack(this.ns);
+        let level = this.ns.getHackingLevel();
+        let hackableServers = new ServerTraverser(this.ns)
+            .traverse((s) => isHackable(this.ns, s, level))
+            .sort(function(a,b){return b.moneyAvailable-a.moneyAvailable});
+
         for (let server of this.distributor.distribute(this.ns)) {
+            if (hackableServers.length === 0) {
+                this.ns.tprint('Ran out of hackable servers.');
+                break;
+            }
+            
             this.ns.killall(server.hostname);
-            this.ns.tprint('Running controller on ' + server.hostname + "...");
-            this.ns.exec(this.distributor.CONTROLLER_FILE, server.hostname, 1, bestServerToHack.hostname);
+            let serverToHack = hackableServers.pop();
+            this.ns.tprint('Running controller on ' + server.hostname + " (hacking " + serverToHack.hostname + ")");
+            this.ns.exec(this.distributor.CONTROLLER_FILE, server.hostname, 1, serverToHack.hostname);
         }
+        if (hackableServers.length === 0) {
+            this.ns.tprint('Done distributing, servers still remaining: ' + hackableServers.join(','));
+        }
+
     }
 }
 
@@ -61,7 +66,11 @@ class ControllerDistributor {
             return false;
         }
         
-        if (this.getHash(ns, server) !== hash) {
+        let serverHash = this.getHash(ns, server);
+        if (serverHash === null) {
+            ns.tprint(server.hostname + ' no controller yet, will distribute.');
+            return true;
+        } else if (serverHash !== hash) {
             ns.tprint(server.hostname + ' has an out of date controller, will update.');
             return true;
         }
@@ -92,7 +101,6 @@ class ControllerDistributor {
             ns.write(hash + '.hash.txt');
             ns.scp(hash + '.hash.txt', server.hostname, ns.getHostname());	
         }
-        
     }
     
     distribute(ns: NS): Server[] {
