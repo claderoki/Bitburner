@@ -16,22 +16,25 @@ export async function main(ns: NS) {
 class ControllerManager {
     distributor: ControllerDistributor;
     ns: NS;
+    upgraded: Server[]
 
     constructor(ns: NS) {
         this.ns = ns;
+        this.upgraded = [];
         this.distributor = new ControllerDistributor();
     }
 
-    poll() {
+    distributePoll(servers: Server[]) {
         let level = this.ns.getHackingLevel();
         let ns = this.ns;
-        let hackableServers = new ServerTraverser(this.ns)
-            .traverse((s) => isHackable(this.ns, s, level))
-            .sort(function(a,b) {
-                return calculateProfitPerMs(ns, a)-calculateProfitPerMs(ns, b);
-            });
+        let hackableServers = servers
+            .filter((s) => isHackable(this.ns, s, level))
+            .sort((a,b) => calculateProfitPerMs(ns, a)-calculateProfitPerMs(ns, b));
 
-        for (let server of this.distributor.distribute(this.ns)) {
+        let distributed = this.distributor.distribute(this.ns);
+        distributed.push(...this.upgraded);
+
+        for (let server of distributed) {
             if (hackableServers.length === 0) {
                 this.ns.tprint('Ran out of hackable servers.');
                 break;
@@ -50,7 +53,36 @@ class ControllerManager {
         if (hackableServers.length > 0) {
             this.ns.tprint('Done distributing, servers still remaining: ' + hackableServers.map((s) => s.hostname).join(','));
         }
+        this.upgraded = [];
+    }
 
+    purchasePoll(servers: Server[]) {
+        while (true) {
+            let hostname = this.ns.purchaseServer('home', 4);
+            if (hostname === '') {
+                return;
+            }
+            servers.push(this.ns.getServer(hostname));
+        }
+    }
+
+    upgradePoll(servers: Server[]) {
+        for (let server of servers.filter((s) => s.purchasedByPlayer)) {
+            if (server.hostname === 'home') {
+                continue;
+            }
+            if (this.ns.upgradePurchasedServer(server.hostname, server.maxRam * 2)) {
+                this.upgraded.push(server);
+            }
+        }
+    }
+
+    poll() {
+        let servers = new ServerTraverser(this.ns).all();
+        this.purchasePoll(servers);
+        this.upgradePoll(servers);
+
+        this.distributePoll(servers);
     }
 }
 

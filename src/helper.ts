@@ -58,6 +58,11 @@ export class ServerTraverser {
         }
         return Object.keys(data).map((k) => data[k]);
     }
+
+    all(): Server[] {
+        return this.traverse((_) => true);
+    }
+
 }
 
 export function isHackable(ns: NS, server: Server, hackingLevel: number) {
