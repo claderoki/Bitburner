@@ -1,5 +1,29 @@
 import type {NS, Server} from '../index';
-import { ServerTraverser, calculateProfitPerMs, isCrackable, isHackable } from './helper';
+import { ServerTraverser, isCrackable, isHackable } from './helper';
+
+export function calculateProfitPerMs(ns: NS, server: Server): number {
+    if (server.moneyMax <= 0) {
+        return 0;
+    }
+
+    const hackFraction = 0.1;
+    const hackThreads = Math.ceil(ns.hackAnalyzeThreads(server.hostname, hackFraction * server.moneyAvailable));
+
+    if (hackThreads <= 0) {
+        return 0;
+    }
+
+    const hackedFraction = ns.hackAnalyze(server.hostname) * hackThreads;
+    const hackedMoney = hackedFraction * server.moneyAvailable;
+    const newMoney = server.moneyAvailable - hackedMoney;
+    const growthMultiplier = server.moneyMax / newMoney;
+
+    if (growthMultiplier < 1) {
+        return 0;
+    }
+    const cycleTime = Math.max(ns.getHackTime(server.hostname), ns.getGrowTime(server.hostname), ns.getWeakenTime(server.hostname));
+    return hackedMoney / cycleTime;
+}
 
 
 function numberWithCommas(x: number) {
@@ -10,11 +34,10 @@ function numberWithCommas(x: number) {
 
 export async function main(ns: NS) {
     let statusToSearch = ns.args.length > 0 ? ns.args[0] : null;
-    let traverser = new ServerTraverser(ns);
+    let traverser = new ServerTraverser<Server>(ns, ns.scan, ns.getServer);
     let all = traverser.traverse(() => true);
     let infos = [];
 
-    let level = ns.getHackingLevel();
     for (let server of all) {
         let info: ServerInfo = {
             server: server.hostname,
@@ -23,9 +46,9 @@ export async function main(ns: NS) {
             profitPerMS: '',
             status: ''
         }
-        if (isHackable(ns, server, level)) {
+        if (isHackable(server, ns.getHackingLevel())) {
             info.status = 'hackable'
-        } else if (isCrackable(ns, server, level)) {
+        } else if (isCrackable(ns, server, ns.getHackingLevel(), ns.fileExists)) {
             info.status = 'crackable';
         } else {
             continue;
