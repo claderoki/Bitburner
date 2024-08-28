@@ -53,10 +53,15 @@ export class ServerTraverser<T> {
         return Object.keys(data).map((k) => data[k]);
     }
 
+    filter(predicate: (t: T) => boolean): T[] {
+        return this.traverse(predicate);
+    }
+
     all(): T[] {
         return this.traverse((_) => true);
     }
 }
+
 
 export function isHackable(server: Server, hackingLevel: number) {
     if (server.purchasedByPlayer || hackingLevel < server.requiredHackingSkill) {
@@ -111,5 +116,58 @@ export function hashCode(value: string) {
   
 
 function getServer() {
-    
+
+}
+
+export interface Argument {
+    flag: string;
+    choices?: string[];
+    defaultValue: string | null;
+}
+
+
+export class ArgumentParser {
+    arguments: {[key: string]: Argument} = {};
+
+    addArgument(flag: string, choices: string[], defaultValue?: string) {
+        this.arguments[flag] = {flag, choices, defaultValue};
+    }
+
+    rawParse(ns: NS): {[key: string]: string} {
+        let raw: {[key: string]: string} = {};
+        for (let arg of ns.args) {
+            arg = arg.toString();
+            if (arg.startsWith('--')) {
+                let values = arg.split('=');
+                raw[values[0].substring(2)] = values[1];
+            }
+        }
+        return raw;
+    }
+
+    private addIf(flag: string, value: string, data: {[key: string]: string}) {
+        let arg = this.arguments[flag];
+        if (arg.choices && arg.choices.indexOf(value) === -1) {
+            if (arg.defaultValue) {
+                value = arg.defaultValue;
+            } else {
+                throw Error(value + ' is not a valid value. Valid values: ' + arg.choices);
+            }
+        }
+        data[flag] = value;
+    }
+
+    parse(ns: NS): {[key: string]: string} {
+        let missing = Object.keys(this.arguments);
+        let data = {};
+        let raw: {[key: string]: string} = this.rawParse(ns);
+        for(let flag of Object.keys(this.arguments)) {
+            let argument = raw[flag];
+            if (argument) {
+                missing.splice(missing.indexOf(flag), 1);
+                this.addIf(flag, argument, data);
+            }
+        }
+        return data;
+    }
 }

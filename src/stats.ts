@@ -61,8 +61,14 @@ export async function main(ns: NS) {
         infos.push(info);
     }
 
-    for (let info of infos) {
-        ns.tprint(info);
+    if (true) {
+        let cmd = infos.map((i) => i.path.split('.').join('; connect ')).join('\n\n');
+        cmd += '; backdoor';
+        ns.tprint(cmd);
+    } else {
+        for (let info of infos) {
+            ns.tprint(info);
+        }
     }
 }
 

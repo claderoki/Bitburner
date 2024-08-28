@@ -1,210 +1,118 @@
-import type {NS, Server} from '../index';
-import { ServerTraverser, hashCode, isHackable } from './helper';
+import type { NS, Server } from '../index';
+import { ServerTraverser, isHackable } from './helper';
 
+let homeThreadMargin = 0.9;
 
-class ArgParser {
+function seconds(seconds: number): number {
+    return seconds * 1000;
+}
+
+function minutes(minutes: number): number {
+    return seconds(minutes * 60);
+}
+
+export async function main(ns: NS) {
+    while (true) {
+        ns.tprint('1');
+        await runAndWaitFor(ns, 'crack.js');
+        ns.tprint('2');
+        await runAndWaitFor(ns, 'distributor.js');
+        ns.tprint('3');
+        let manager = new ControllerManager(ns);
+        manager.poll();
+
+        for (let i = 0; i < 60; i++) {
+            if (percentageCanUpgrade(ns) > 45) {
+                break;
+            }
+            await ns.sleep(minutes(1));
+        }
+        await ns.sleep(seconds(30));
+    }
+}
+
+async function waitOrEarlyBreakWhen(ns: NS, ms: number, predicate: () => boolean) {
+    let parts = ms / 1000;
+    for (let i = 0; i < parts; i++) {
+        if (predicate()) {
+            break;
+        }
+        await ns.sleep(seconds(1));
+        break;
+    }
+}
+
+class ControllerManager {
     ns: NS;
 
     constructor(ns: NS) {
         this.ns = ns;
     }
 
-    optional<T>(index: number, parser: (s: string | number | boolean) => T): T | null {
-        if (index >= this.ns.args.length) {
-            return null;
-        }
-        return parser(this.ns.args[index]);
-    }
-}
+    distributePoll() {
+        let hackableServers = new ServerTraverser<Server>(this.ns, this.ns.scan, this.ns.getServer)
+            .filter((s) => isHackable(s, this.ns.getHackingLevel()))
+            .sort((a, b) => calculateProfitPerMs(this.ns, a) - calculateProfitPerMs(this.ns, b));
 
-export async function main(ns: NS) {
-    let parser = new ArgParser(ns);
-    let force = parser.optional(0, (s) => s.toString() === 'force');
-    let manager = new ControllerManager(ns, force);
-    manager.poll();
-}
-
-class ControllerManager {
-    distributor: ControllerDistributor;
-    ns: NS;
-    upgraded: Server[]
-    force: boolean;
-
-    constructor(ns: NS, force: boolean = false) {
-        this.ns = ns;
-        this.upgraded = [];
-        this.distributor = new ControllerDistributor(ns);
-        this.force = force;
-        this.distributor.force = force;
-    }
-
-    distributePoll(servers: Server[]) {
-        let level = this.ns.getHackingLevel();
-        let ns = this.ns;
-        let current = ns.getRunningScript('controller.js');
-        let target: string | null = null;
-        if (current) {
-            target = current.args[0].toString();
-        }    
-
-        let hackableServers = servers
-            .filter((s) => isHackable(s, level) && s.hostname !== target)
-            .sort((a,b) => calculateProfitPerMs(ns, a)-calculateProfitPerMs(ns, b));
-
-        let distributed = this.distributor.distribute();
-        distributed.push(...this.upgraded);
+        let distributed = new ServerTraverser<Server>(this.ns, this.ns.scan, this.ns.getServer)
+            .filter((s) => s.backdoorInstalled || s.purchasedByPlayer || s.hostname === 'home')
+            .sort(ServerSort.byRam);
 
         for (let server of distributed) {
             if (hackableServers.length === 0) {
                 this.ns.tprint('Ran out of hackable servers.');
                 break;
             }
-            
-            let threads = 1;
-            if (true) {
-                threads = maxPossibleThreads(this.ns, this.distributor.CONTROLLER_FILE, server.hostname);
-            }
+            this.ns.killall(server.hostname, true);
+            let threads = maxPossibleThreads(this.ns, 'controller.js', server.hostname);
             if (threads === 0) {
                 continue;
             }
-
-            this.ns.killall(server.hostname);
+            if (server.hostname === 'home') {
+                // leave some margin on home to allow for ns.exec to run without issues.
+                threads = Math.floor(threads * homeThreadMargin);
+            }
             let serverToHack = hackableServers.pop();
             this.ns.tprint('Running controller on ' + server.hostname + " (hacking " + serverToHack.hostname + ")");
-            this.ns.exec(this.distributor.CONTROLLER_FILE, server.hostname, threads, serverToHack.hostname);
+            this.ns.exec('controller.js', server.hostname, threads, serverToHack.hostname);
         }
         if (hackableServers.length > 0) {
             this.ns.tprint('Done distributing, servers still remaining: ' + hackableServers.map((s) => s.hostname).join(','));
         }
-        this.upgraded = [];
     }
 
-    purchasePoll(servers: Server[]) {
-        while (true) {
-            let hostname = this.ns.purchaseServer('home', 2);
-            if (hostname === '') {
-                return;
-            }
-            servers.push(this.ns.getServer(hostname));
-        }
+    purchasePoll() {
+        while (this.ns.purchaseServer('home', 2) !== '') { }
     }
 
-    upgradePoll(servers: Server[]) {
+    upgradePoll() {
+        let servers = new ServerTraverser<Server>(this.ns, this.ns.scan, this.ns.getServer)
+            .filter((s) => s.purchasedByPlayer)
+            .sort(ServerSort.byRam);
+
         while (true) {
-            for (let server of servers.filter((s) => s.purchasedByPlayer)) {
+            let anyUpgraded = false;
+            for (let server of servers) {
                 if (server.hostname === 'home') {
                     continue;
                 }
+
                 if (this.ns.upgradePurchasedServer(server.hostname, server.maxRam * 2)) {
+                    anyUpgraded = true;
                     server.maxRam = server.maxRam * 2;
                     this.ns.tprint('Upgraded ' + server.hostname + ' (' + server.maxRam + ' -> ' + server.maxRam * 2 + ')');
-                    this.upgraded.push(server);
-                } else {
-                    return;
                 }
+            }
+            if (anyUpgraded) {
+                return;
             }
         }
     }
 
     poll() {
-        let servers = new ServerTraverser<Server>(this.ns, this.ns.scan, this.ns.getServer).all();
-        this.purchasePoll(servers);
-        this.upgradePoll(servers);
-
-        this.distributePoll(servers);
-    }
-}
-
-class ControllerDistributor {
-    ns: NS;
-    force: boolean = false;
-
-    constructor(ns: NS) {
-        this.ns = ns;
-    }
-
-    FILES_TO_INJECT = [
-        "controller.js",
-        // "hack.js",
-        // "crack.js",
-        // "grow.js",
-        // "helper.js",
-        // "weaken.js",
-    ];
-    CONTROLLER_FILE = this.FILES_TO_INJECT[0];
-    
-    isEligbleForDistribution(server: Server, ramNeeded: number, hash: string) {
-        if (server.hostname === 'home') {
-            return false;
-        }
-        if (!server.backdoorInstalled && !server.purchasedByPlayer) {
-            return false;
-        }
-        let availableRam = server.maxRam - server.ramUsed;
-        if (availableRam < ramNeeded) {
-            return false;
-        }
-        if (this.force) {
-            return true;
-        }
-        
-        let serverHash = this.getHash(server);
-        if (serverHash === null) {
-            this.ns.tprint(server.hostname + ' no controller yet, will distribute.');
-            return true;
-        } else if (serverHash !== hash) {
-            this.ns.tprint(server.hostname + ' has an out of date controller, will update.');
-            return true;
-        }
-    
-        if (this.ns.scriptRunning(this.CONTROLLER_FILE, server.hostname)) {
-            return false;
-        }
-        return true;
-    }
-    
-    getHash(server: Server) {
-        let hashFiles = this.ns.ls(server.hostname, '.hash.txt');
-        if (hashFiles.length === 0) {
-            return null;
-        }
-        let hashFile = hashFiles[0];
-        return hashFile.substring(0, hashFile.length - '.hash.txt'.length);
-    }
-    
-    distributeTo(server: Server, hash: string) {
-        // never delete or mess with files on home.
-        if (server.hostname === 'home') {
-            return;
-        }
-
-        let serverHash = this.getHash(server);
-        if (serverHash !== hash) {
-            for (let file of this.FILES_TO_INJECT) {
-                this.ns.rm(file, server.hostname);
-            }
-            this.ns.rm(serverHash + '.hash.txt', server.hostname);
-            this.ns.scp(this.FILES_TO_INJECT, server.hostname, this.ns.getHostname());	
-            this.ns.write(hash + '.hash.txt');
-            this.ns.scp(hash + '.hash.txt', server.hostname, this.ns.getHostname());	
-        }
-    }
-    
-    distribute(): Server[] {
-        let ramNeeded = this.ns.getScriptRam(this.FILES_TO_INJECT[0]);
-        let currentHash = hashCode(this.FILES_TO_INJECT.map((f) => this.ns.read(f)).join(',')).toString();
-    
-        let servers = new ServerTraverser<Server>(this.ns, this.ns.scan, this.ns.getServer)
-            .traverse((s) => this.isEligbleForDistribution(s, ramNeeded, currentHash))
-            ;
-        if (servers.length === 0) {
-            return [];
-        }
-    
-        for (let server of servers) {
-            this.distributeTo(server, currentHash);
-        }
-        return servers;
+        this.purchasePoll();
+        this.upgradePoll();
+        this.distributePoll();
     }
 }
 
@@ -236,4 +144,48 @@ export function maxPossibleThreads(ns: NS, scriptName: string, host: string): nu
     const availableRam = ns.getServerMaxRam(host) - ns.getServerUsedRam(host);
     let ramCost = ns.getScriptRam(scriptName);
     return Math.floor(availableRam / ramCost);
+}
+
+function percentageCanUpgrade(ns: NS): number {
+    let servers = new ServerTraverser<Server>(ns, ns.scan, ns.getServer).traverse((s) => s.purchasedByPlayer);
+
+    if (servers.length === 0) {
+        return 0;
+    }
+    let upgradableServers = servers.filter((s) => canAfford(ns, ns.getPurchasedServerCost(s.maxRam * 2)));
+    let pct = (upgradableServers.length / servers.length) * 100;
+    return pct;
+}
+
+async function runAndWaitFor(ns: NS, scriptName: string) {
+    let pid = ns.exec(scriptName, ns.getHostname());
+    if (pid === 0) {
+        // pid === 0 most likely means there's not enough threads available on the home server, so lower the home thread margin slightly to correct this automatically.
+        homeThreadMargin -= 0.01;
+    }
+    await waitForScriptToFinish(ns, pid);
+}
+
+async function waitForScriptToFinish(ns: NS, pid: number) {
+    if (pid === 0) {
+        return;
+    }
+    while (ns.isRunning(pid)) {
+        await ns.sleep(seconds(5));
+    }
+}
+
+class ServerSort {
+    static byRam(a: Server, b: Server) {
+        // lowest to highest?
+        return a.maxRam - b.maxRam;
+    }
+
+    static reverse(callable: (a: Server, b: Server) => number): (a: Server, b: Server) => number {
+        return (a,b) => callable(b,a);
+    }
+}
+
+function canAfford(ns: NS, price: number) {
+    return price < ns.getServerMoneyAvailable('home');
 }

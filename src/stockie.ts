@@ -12,10 +12,10 @@ export async function main(ns: NS) {
     let profitMade = 0;
     while (true) {
         while (ns.getServerSecurityLevel(target) > securityThresh) {
-            await ns.weaken(target);
+            await ns.weaken(target, {stock: true});
         }
         while (ns.getServerMoneyAvailable(target) !== 0) {
-            await ns.hack(target);
+            await ns.hack(target, {stock: true});
         }
         let askPrice = ns.stock.getAskPrice(stockSymbol);
         let maxPurchasable = Math.min(Math.floor(ns.getServerMoneyAvailable(host) / askPrice), ns.stock.getMaxShares(stockSymbol)) / 2;
@@ -28,7 +28,7 @@ export async function main(ns: NS) {
         profitMade -= cost;
 
         while (ns.getServerMoneyAvailable(target) !== maxMoney) {
-            await ns.grow(target);
+            await ns.grow(target, {stock: true});
         }
         let sellPrice = ns.stock.sellStock(stockSymbol, maxPurchasable);
         if (sellPrice === 0) {
