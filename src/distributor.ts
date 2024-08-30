@@ -5,12 +5,11 @@ export async function main(ns: NS) {
     new ControllerDistributor(ns).distribute();
 }
 
-
 class ControllerDistributor {
     ns: NS;
 
     constructor(ns: NS) {
-        this.ns = ns;   
+        this.ns = ns;
     }
 
     FILES_TO_INJECT = ["controller.js"];

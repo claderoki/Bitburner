@@ -44,6 +44,7 @@ export class ServerTraverser<T> {
 
     traverse(predicate: (t: T) => boolean): T[] {
         let data: {[key: string]: T | null} = {};
+        // add home here
         this.traverseRecursively(null, '.', data, predicate);
         for (let key of Object.keys(data)) {
             if (data[key] === null) {
@@ -113,11 +114,6 @@ export function hashCode(value: string) {
     }
     return Math.abs(hash);
 }
-  
-
-function getServer() {
-
-}
 
 export interface Argument {
     flag: string;
@@ -129,8 +125,13 @@ export interface Argument {
 export class ArgumentParser {
     arguments: {[key: string]: Argument} = {};
 
-    addArgument(flag: string, choices: string[], defaultValue?: string) {
+    addArgument(flag: string, choices: string[], defaultValue?: string): ArgumentParser {
         this.arguments[flag] = {flag, choices, defaultValue};
+        return this;
+    }
+
+    addBoolArgument(flag: string, defaultValue: boolean): ArgumentParser {
+        return this.addArgument(flag, ['1', '0'], defaultValue ? '1' : '0');
     }
 
     rawParse(ns: NS): {[key: string]: string} {
@@ -157,10 +158,23 @@ export class ArgumentParser {
         data[flag] = value;
     }
 
+    private showHelp(ns: NS) {
+        for (let flag of Object.keys(this.arguments)) {
+            let info = this.arguments[flag];
+            ns.tprint('--' + flag + ', possible options: ' +  info.choices + ' default: ' + info.defaultValue);
+        }
+    }
+
     parse(ns: NS): {[key: string]: string} {
         let missing = Object.keys(this.arguments);
         let data = {};
+        if (ns.args.length > 0 && ns.args[0] === '--help') {
+            this.showHelp(ns);
+            return null;
+        }
+
         let raw: {[key: string]: string} = this.rawParse(ns);
+
         for(let flag of Object.keys(this.arguments)) {
             let argument = raw[flag];
             if (argument) {
@@ -171,3 +185,8 @@ export class ArgumentParser {
         return data;
     }
 }
+
+export const MANAGER_FORCE_PORT = 3156;
+export const MANAGER_CONFIG_PORT = 3556;
+
+export const PORT_EMPTY = "NULL PORT DATA";
